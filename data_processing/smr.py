@@ -240,7 +240,7 @@ class StandardizedMortalityRatio:
         if return_processed_data:
             return standard_population_mortality_by_age, standard_population_mortality_by_sex,mortality_by_county
 
-    def calculate_smr(self) -> Optional[pd.DataFrame]:
+    def calculate_smr(self, save_dir:str, return_smr_df: bool = False) -> Optional[pd.DataFrame]:
         """
         Calculate the SMR by county for the selected state.
         """
@@ -322,62 +322,63 @@ class StandardizedMortalityRatio:
 
         self.population_data = self.population_data[['FIPS', 'observed_deaths', 'expected_deaths', 'SMR']]
 
-        # save the SMR data to a CSV file.
-        # self.population_data.to_csv(f"smr_data_{self.year}_{self.state_abbr}.csv", index=False)
+        # Save the SMR data to a CSV file.
+        self.population_data.to_csv(f"{save_dir}/smr_data_{self.year}_{self.state_abbr}.csv", index=False)
 
-        return self.population_data
+        if return_smr_df:
+            return self.population_data
 
 
-    def plot_map(self, geo_data_path: str, save_dir: Optional[str] = None) -> None:
-        """
-        Plot the nationwide SMR on a geographic map.
-        """
-        if self.population_data is None:
-            raise ValueError("SMR data not available. Run calculate_smr() first.")
+    # def plot_map(self, geo_data_path: str, save_dir: Optional[str] = None) -> None:
+    #     """
+    #     Plot the nationwide SMR on a geographic map.
+    #     """
+    #     if self.population_data is None:
+    #         raise ValueError("SMR data not available. Run calculate_smr() first.")
 
-        # Load geographic data (assuming it covers the entire USA).
-        geo_df = gpd.read_file(geo_data_path, dtype={'FIPS': str})
-        # Ensure FIPS codes are 5 digits.
-        geo_df['FIPS'] = geo_df['FIPS'].astype(str).str.zfill(5)
+    #     # Load geographic data (assuming it covers the entire USA).
+    #     geo_df = gpd.read_file(geo_data_path, dtype={'FIPS': str})
+    #     # Ensure FIPS codes are 5 digits.
+    #     geo_df['FIPS'] = geo_df['FIPS'].astype(str).str.zfill(5)
 
-        # Merge SMR data with geographic boundaries.
-        merged_df = self.population_data.merge(geo_df[['FIPS', 'geometry']], on='FIPS', how='left')
-        merged_df = gpd.GeoDataFrame(merged_df, geometry='geometry')
+    #     # Merge SMR data with geographic boundaries.
+    #     merged_df = self.population_data.merge(geo_df[['FIPS', 'geometry']], on='FIPS', how='left')
+    #     merged_df = gpd.GeoDataFrame(merged_df, geometry='geometry')
 
-        # drop rows with FIPS starts with 72, 78, 02, 15, 60
-        merged_df = merged_df[~merged_df['FIPS'].str.startswith(('72', '78', '02', '15', '60'))]
+    #     # drop rows with FIPS starts with 72, 78, 02, 15, 60
+    #     merged_df = merged_df[~merged_df['FIPS'].str.startswith(('72', '78', '02', '15', '60'))]
 
-        # Define plotting parameters.
-        zero_color = "white"  # For counties with SMR == 0.
-        cmap = "inferno"      # Colormap for SMR values.
+    #     # Define plotting parameters.
+    #     zero_color = "white"  # For counties with SMR == 0.
+    #     cmap = "inferno"      # Colormap for SMR values.
 
-        fig, ax = plt.subplots(figsize=(12, 8))
-        # Plot counties with nonzero SMR.
-        merged_df[merged_df["SMR"] != 0].plot(
-            column="SMR",
-            cmap=cmap,
-            ax=ax,
-            legend=True,
-            legend_kwds={
-                'orientation': "horizontal",
-                'shrink': 0.5,
-                'pad': 0.02,
-                'aspect': 30
-            }
-        )
-        # Overlay counties with SMR == 0.
-        merged_df[merged_df["SMR"] == 0].plot(
-            color=zero_color, ax=ax, edgecolor="black", alpha=0.5
-        )
+    #     fig, ax = plt.subplots(figsize=(12, 8))
+    #     # Plot counties with nonzero SMR.
+    #     merged_df[merged_df["SMR"] != 0].plot(
+    #         column="SMR",
+    #         cmap=cmap,
+    #         ax=ax,
+    #         legend=True,
+    #         legend_kwds={
+    #             'orientation': "horizontal",
+    #             'shrink': 0.5,
+    #             'pad': 0.02,
+    #             'aspect': 30
+    #         }
+    #     )
+    #     # Overlay counties with SMR == 0.
+    #     merged_df[merged_df["SMR"] == 0].plot(
+    #         color=zero_color, ax=ax, edgecolor="black", alpha=0.5
+    #     )
 
-        plt.title("Standardized Mortality Ratio (SMR) for the USA")
-        plt.axis("off")
+    #     plt.title("Standardized Mortality Ratio (SMR) for the USA")
+    #     plt.axis("off")
 
-        if save_dir:
-            plt.savefig(f"{save_dir}/smr_map_USA.png", dpi=300, bbox_inches="tight")
-            plt.close()
-        else:
-            plt.show()
+    #     if save_dir:
+    #         plt.savefig(f"{save_dir}/smr_map_USA.png", dpi=300, bbox_inches="tight")
+    #         plt.close()
+    #     else:
+    #         plt.show()
 
 
 # Example usage:

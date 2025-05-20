@@ -13,7 +13,6 @@ from utills.calculate_tda_summaries import compute_persistence
 # from calculate_tda_summaries import compute_persistence
 
 
-
 class svi_tda_summaries:
 
     def __init__(self, scaled_svi_path, variables, state_abbr=None, threshold=None, filter_method='down'):
@@ -25,61 +24,7 @@ class svi_tda_summaries:
         self.state_abbr = state_abbr
 
 
-    def filter_clean_gdf(self):
-
-        # this sill read the svi geojson file already scaled because for entire US it is too expensive to scale it
-
-        # read the svi geojson file
-        svi = gpd.read_file(self.scaled_svi_path)
-
-        # variables_with_censusinfo = ['FIPS', 'STCNTY'] + self.variables + ['geometry'] +['ST_ABBR','COUNTY']
-
-        # # filter the data
-        # svi = svi[variables_with_censusinfo]
-
-        # if self.state_abbr is not None:
-        #     # filter the data based on the state
-        #     svi = svi[svi['ST_ABBR'] == self.state_abbr]
-
-        # # replacing empty data with adjeceant county data average without negative values
-
-        # # making a geodataframe
-
-        # svi = gpd.GeoDataFrame(svi, geometry="geometry")
-
-        # # Compute Queen adjacency
-        # w = ps.weights.Queen.from_dataframe(svi, ids=svi["FIPS"])
-
-        # # Store adjacent county FIPS in a new column
-        # svi["adjacent_fips"] = svi["FIPS"].apply(lambda fips: w.neighbors.get(fips, []))
-
-        # # replace negative values with the average of the adjacent counties without negative adjacent values
-        # for county in svi['FIPS'].unique():
-        #     for variable in self.variables:
-
-        #         if svi.loc[svi['FIPS'] == county, variable].values[0] < 0:
-        #             # get those adjacent counties variable values to a list
-        #             adjacent_values = []
-        #             for adjacent_county in svi.loc[svi['FIPS'] == county, 'adjacent_fips'].values[0]:
-        #                 adjacent_values.append(svi.loc[svi['FIPS'] == adjacent_county, variable].values[0])
-
-                    
-        #             # get the average of the adjacent values without the negative values
-        #             adjacent_values = [value for value in adjacent_values if value >= 0]
-        #             average_adjacent_value = np.mean(adjacent_values)
-
-        #             # replace the negative value with the average of the adjacent values
-        #             svi.loc[svi['FIPS'] == county, variable] = average_adjacent_value
-                    
-        #         else:
-        #             continue
-
-
-        # # min max scaling for each variable
-        # for variable in self.variables:
-        #     svi[variable] = (svi[variable] - svi[variable].min()) / (svi[variable].max() - svi[variable].min())
-
-        self.svi = svi
+        self.svi = gpd.read_file(self.scaled_svi_path)
 
     def compute_tda_summaries_svi(self):
 
