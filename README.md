@@ -10,7 +10,7 @@ This repository contains the full research pipeline—from raw county‑level da
 
 ---
 
-## 📁 Repository layout
+## Repository layout
 
 ```text
 SPATIAL-RISK-TDA/
@@ -45,7 +45,7 @@ SPATIAL-RISK-TDA/
 
 ---
 
-## 🚀 Quick‑start
+## Quick‑start
 
 ### 1. Clone & create environment
 
@@ -102,7 +102,7 @@ Use notebooks in **`simulations/`** to evaluate how well TDA summaries capture k
 
 ---
 
-## 📜 Citation
+## Citation
 
 If you use this code, please cite:
 
@@ -117,7 +117,7 @@ If you use this code, please cite:
 
 ---
 
-## 📝 License
+## License
 
 MIT – see `LICENSE` for details.
 
