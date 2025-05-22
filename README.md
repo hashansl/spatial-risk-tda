@@ -1,6 +1,6 @@
 # Spatial‑Risk‑TDA
 
-*A Topological Data Analysis (TDA) workflow for measuring un‑measured spatial risk and fitting Besag–York–Mollié (BYM‑T) models to opioid‑related health outcomes.*
+*A Topological Data Analysis (TDA) workflow for measuring un‑measured spatial risk and fitting Besag–York–Mollié(BYM2) and BYM‑TDA models to opioid‑related health outcomes.*
 
 This repository contains the full research pipeline—from raw county‑level data to Bayesian spatial models—used in our study of opioid vulnerability across U.S. counties. The core stages are:
 
@@ -85,7 +85,7 @@ jupyter nbconvert --execute generate_tda_summaries.ipynb
 This notebook constructs adjacency‑based simplicial complexes for each county‑level snapshot and generates TDA summaries for each county. The summaries are saved in **`data/processed_data/`**.
 
 
-### 5. Fit BYM‑T models
+### 5. Fit BYM2/BYM‑T models
 
 Select a state‑specific notebook (e.g. **`bym_modeling_tn.ipynb`**) and run the full workflow to:
 
