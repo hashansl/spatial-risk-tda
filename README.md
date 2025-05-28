@@ -78,9 +78,7 @@ Cleaned outputs will be written to **`data/processed_data/`**.
 
 ### 4. Generate TDA summaries
 
-```bash
-jupyter nbconvert --execute generate_tda_summaries.ipynb
-```
+Run generate_tda_summaries.ipynb
 
 This notebook constructs adjacency‑based simplicial complexes for each county‑level snapshot and generates TDA summaries for each county. The summaries are saved in **`data/processed_data/`**.
 
