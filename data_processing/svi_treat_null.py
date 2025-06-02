@@ -98,8 +98,15 @@ class fill_null_standerdize_svi_usa():
             return
 
         if self.svi_null_treated is None:
-            print("Error: SVI null-treated data not available. Run `filter_trear_null()` first.")
-            return
+            # Check if the null-treated data is available (i.e., if filter_trear_null() has been run separately)
+            svi_cleaned_path = self.save_dir + f'/USA_SVI_{self.year}_cleaned_null_treated.gdb'
+
+            if os.path.exists(svi_cleaned_path):
+                print("Loading existing SVI null-treated data...")
+                self.svi_null_treated = gpd.read_file(svi_cleaned_path)
+            else:
+                print("Error: SVI null-treated data not available. Run `filter_trear_null()` first.")
+                return
 
         print(f"Scaling SVI data for {state_abbr}...")
 
