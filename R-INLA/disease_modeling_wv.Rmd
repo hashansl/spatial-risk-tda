@@ -1,0 +1,123 @@
+---
+title: "disease_modeling_wv"
+author: "Hashan Fernando"
+date: "2026-01-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(INLA)
+library(sf)
+library(spdep)
+library(dplyr)
+library(readr)
+library(ggplot2)
+```
+
+# ==============================================================================
+# 1. SETUP AND PATHS
+# ==============================================================================
+
+```{r}
+current_path <- getwd()
+
+# Set the base path to one leve up from the current path
+current_path <- dirname(getwd())
+
+# Set the state abbreviation
+state_abb <- "WV"
+
+print(paste("Current Path:", current_path))
+```
+
+# ==============================================================================
+# 2. LOAD DATA
+# ==============================================================================
+
+```{r}
+message("Loading data...")
+
+# Load SVI TDA Data
+tda_path <- file.path(current_path, "data", "processed_data", paste0("tda_summaries_2018_", state_abb, "_down.csv"))
+svi_tda_data <- read_csv(tda_path, col_types = cols(STCNTY = col_character()))
+
+# Load SMR Data
+smr_path <- file.path(current_path, "data", "processed_data", paste0("smr_data_2018_", state_abb, ".csv"))
+smr_data <- read_csv(smr_path, col_types = cols(FIPS = col_character()))
+
+# Load Geometry Data (GDB)
+# Python: gpd.read_file(...)
+geo_path <- file.path(current_path, "data", "raw_data", "SVI2018_US_county.gdb")
+# Note: "layers" in GDB might vary, usually it's the main layer name. 
+# You can check layers with: st_layers(geo_path)
+geo_data <- st_read(geo_path, quiet = TRUE) %>%
+  select(FIPS, ST_ABBR) # Select only relevant columns to match your code
+```
+# ==============================================================================
+# 3. DATA MERGING AND PROCESSING
+# ==============================================================================
+```{r}
+
+message("Processing data...")
+
+# Merge SMR and TDA data (Left join on FIPS = STCNTY)
+combined_data <- smr_data %>%
+  left_join(svi_tda_data, by = c("FIPS" = "STCNTY"))
+
+# Merge with Geometry (Left join on FIPS)
+# Ensure we convert combined_data to an sf object
+combined_data <- geo_data %>%
+  right_join(combined_data, by = "FIPS") %>%
+  filter(ST_ABBR == state_abb)
+
+# Check shape (matches your (55, 89) approximately)
+print(paste("Shape of data:", nrow(combined_data)))
+
+```
+# =============================================================================
+
+```{r}
+# Cleaning the processed data
+
+# remove rows with zero observed deaths
+combined_data <- combined_data %>%
+  filter(observed_deaths > 0)
+
+# identify islands (no neighbors) and remove them
+nb <- poly2nb(combined_data, row.names = combined_data$FIPS)
+islands <- which(card(nb) == 0)
+if (length(islands) > 0) { 
+  combined_data <- combined_data[-islands, ]
+}
+
+# drop rows FIPS starts with ('72', '78', '02', '15', '60')
+combined_data <- combined_data %>%
+  filter(!substr(FIPS, 1, 2) %in% c('72', '78', '02', '15', '60'))
+
+
+print(paste("Shape after cleaning:", nrow(combined_data)))
+
+```
+```{r}
+# aggregate row wise data in the columns that ends with '_AL' and store in a column nsamed 'AL'
+combined_data <- combined_data %>%
+  rowwise() %>%
+  mutate(AL = sum(c_across(ends_with("_AL")), na.rm = TRUE)) %>%
+  ungroup()
+
+# print the shape after adding AL column
+print(paste("Shape after adding AL column:", nrow(combined_data), ncol(combined_data)))
+
+```
+
+
+
+
+
+
+
+
