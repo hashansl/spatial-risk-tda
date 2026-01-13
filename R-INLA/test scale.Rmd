@@ -1,0 +1,23 @@
+---
+title: "Untitled"
+author: "Hashan Fernando"
+date: "2026-01-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#
+
+```{r}
+# matrix_path: ~/CODE/Archive/git/spatial-risk-tda/R-INLA/matrix_mittelfranken.txt
+
+# Load the matrix
+matrix_data <- read.table("~/CODE/Archive/git/spatial-risk-tda/R-INLA/matrix_mittelfranken.txt")
+
+# If it's a proper matrix (numeric data), convert to matrix format
+matrix_mittelfranken <- as.matrix(matrix_data)
+
+```

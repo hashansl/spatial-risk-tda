@@ -1,0 +1,507 @@
+---
+title: "disease_modeling_wv"
+author: "Hashan Fernando"
+date: "2026-01-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(INLA)
+library(sf)
+library(spdep)
+library(dplyr)
+library(readr)
+library
+
+library(Matrix)
+library(MASS)   # For ginv()
+```
+
+# ==============================================================================
+# 1. SETUP AND PATHS
+# ==============================================================================
+
+```{r}
+# Set the base path to one leve up from the current path
+current_path <- dirname(getwd())
+
+# Set the state abbreviation
+state_abb <- "WV"
+
+print(paste("Current Path:", current_path))
+```
+
+# ==============================================================================
+# 2. LOAD DATA
+# ==============================================================================
+
+```{r}
+# Load SVI TDA Data
+tda_path <- file.path(current_path, "data", "processed_data", paste0("tda_summaries_2018_", state_abb, "_down.csv"))
+svi_tda_data <- read_csv(tda_path, col_types = cols(STCNTY = col_character()))
+
+# Load SMR Data
+smr_path <- file.path(current_path, "data", "processed_data", paste0("smr_data_2018_", state_abb, ".csv"))
+smr_data <- read_csv(smr_path, col_types = cols(FIPS = col_character()))
+
+# Load Geometry Data (GDB)
+geo_path <- file.path(current_path, "data", "raw_data", "SVI2018_US_county.gdb")
+# Note: "layers" in GDB might vary, usually it's the main layer name. 
+# You can check layers with: st_layers(geo_path)
+geo_data <- st_read(geo_path, quiet = TRUE) %>%
+  select(FIPS, ST_ABBR) # Select only relevant columns to match your code
+```
+# ==============================================================================
+# 3. DATA MERGING AND PROCESSING
+# ==============================================================================
+```{r}
+# Merge SMR and TDA data (Left join on FIPS = STCNTY)
+combined_data <- smr_data %>%
+  left_join(svi_tda_data, by = c("FIPS" = "STCNTY"))
+
+# Merge with Geometry (Left join on FIPS)
+# Ensure we convert combined_data to an sf object
+combined_data <- geo_data %>%
+  right_join(combined_data, by = "FIPS") %>%
+  filter(ST_ABBR == state_abb)
+
+# Check shape
+print(paste("Shape after adding AL column:", nrow(combined_data), ncol(combined_data)))
+
+```
+```{r}
+# Cleaning the processed data
+
+# remove rows with zero observed deaths (removing missing data)
+combined_data <- combined_data %>%
+  filter(observed_deaths > 0)
+
+
+# identify islands (no neighbors) and remove them
+nb <- poly2nb(combined_data, row.names = combined_data$FIPS)
+islands <- which(card(nb) == 0)
+if (length(islands) > 0) { 
+  combined_data <- combined_data[-islands, ]
+}
+
+# drop rows FIPS starts with ('72', '78', '02', '15', '60')
+combined_data <- combined_data %>%
+  filter(!substr(FIPS, 1, 2) %in% c('72', '78', '02', '15', '60'))
+
+
+print(paste("Shape after cleaning:", nrow(combined_data)))
+
+```
+# ==============================================================================
+# 3.5 PROCESSING DATA FOR THE BYM-T MODEL
+# ==============================================================================
+
+```{r}
+# aggregate row wise data in the columns that ends with '_AL' and store in a column named 'AL'
+combined_data <- combined_data %>%
+  rowwise() %>%
+  mutate(AL = sum(c_across(ends_with("_AL")), na.rm = TRUE)) %>%
+  ungroup()
+
+# print the shape after adding AL column
+print(paste("Shape after adding AL column:", nrow(combined_data), ncol(combined_data)))
+
+# mean standerdize the AL column
+combined_data <- combined_data %>%
+  mutate(AL = scale(AL))
+
+```
+# ==============================================================================
+# 4. SPATIAL ADJACENCY MATRIX (GRAPH)
+# ==============================================================================
+
+```{r}
+# INLA requires a graph object or file to define neighbors.
+# This replaces libpysal.weights.Queen
+
+# Create neighbor list (Queen contiguity)
+nb <- poly2nb(combined_data, queen = TRUE)
+
+# Convert to INLA graph file
+nb2INLA("wv.graph", nb)
+g <- inla.read.graph("wv.graph")
+
+# Create a unique ID for the spatial random effect (INLA requires integer indices)
+combined_data$ID_spatial <- 1:nrow(combined_data)
+
+# For BYM2 model in INLA
+Q <- inla.graph2matrix(g)
+
+n <- nrow(Q)
+
+print(paste("Number of areas (n):", n))
+
+QQ =inla.scale.model(Q, constr = list(A = matrix(1,1,n), e = 0))
+
+```
+
+
+
+
+```{r}
+# INLA requires a graph object or file to define neighbors.
+# This replaces libpysal.weights.Queen
+
+# Create neighbor list (Queen contiguity)
+nb <- poly2nb(combined_data, queen = TRUE)
+
+# Convert to INLA graph file
+nb2INLA("wv.graph", nb)
+g <- inla.read.graph("wv.graph")
+
+# Create a unique ID for the spatial random effect (INLA requires integer indices)
+combined_data$ID_spatial <- 1:nrow(combined_data)
+
+# For BYM2 model in INLA
+Q <- inla.graph2matrix(g)
+D <- diag(rowSums(Q))
+Q_struct <- D - Q
+
+# Add small jitter
+n <- nrow(Q_struct)
+Q_perturbed <- Q_struct + diag(rep(max(diag(Q_struct)) * sqrt(.Machine$double.eps), n))
+
+# Compute generalized inverse
+Q_inv <- MASS::ginv(as.matrix(Q_perturbed))
+
+# BYM2 scaling factor (geometric mean of diagonal)
+scaling_factor_bym2 <- exp(mean(log(diag(Q_inv))))
+
+print(paste("Scaling factor", scaling_factor_bym2))
+```
+
+```{r}
+
+get_python_scaling_factor <- function(Q) {
+  # Ensure Q is a sparse matrix (dsCMatrix or similar)
+  # Q should be the structure matrix (diagonal = # neighbors, off-diag = -1)
+  
+  n <- nrow(Q)
+  
+  # 1. Add small jitter (Exactly as in the Python code)
+  # np.sqrt(np.finfo(np.float64).eps) is approx sqrt(.Machine$double.eps) in R
+  epsilon <- max(diag(Q)) * sqrt(.Machine$double.eps)
+  
+  # Q_perturbed = Q + epsilon * I
+  Q_pert <- Q + Diagonal(n) * epsilon
+  
+  # 2. Compute the inverse (Sigma)
+  # In Python: spsolve(Q_perturbed, Identity)
+  # For N=53, a dense solve is fast and accurate
+  Sigma <- solve(Q_pert) 
+  
+  # 3. Apply the Constraint Projection (The "Projector" logic from Python)
+  # Python: W = Sigma @ A.T  (Where A is vector of ones)
+  # This equals the row sums of Sigma
+  W <- rowSums(Sigma) 
+  
+  # Python: solve(A @ W, np.ones(1)) 
+  # This equals 1 / sum(W)
+  inv_A_W <- 1 / sum(W)
+  
+  # Python: Q_inv = Sigma - np.outer(W * ..., W.T)
+  # We use standard matrix multiplication for outer product
+  correction <- (W %*% t(W)) * inv_A_W
+  Q_inv <- Sigma - correction
+  
+  # 4. Compute Geometric Mean of Diagonal
+  # Python: np.exp(np.sum(np.log(np.diag(Q_inv))) / n)
+  scaling_factor <- exp(mean(log(diag(Q_inv))))
+  
+  return(scaling_factor)
+}
+
+# --- USAGE ---
+
+# Assuming 'Q_mat' is your structure matrix from inla.graph2matrix(g)
+s_factor_python <- get_python_scaling_factor(Q_mat)
+
+print(paste("Python-style Scaling Factor:", s_factor_python))
+
+# Create the scaled matrix
+Q_scaled <- Q_mat * s_factor_python
+
+
+```
+
+```{r}
+# SCALE THE MATRIX ONCE AND PASS TO Q()
+
+# 1. Create your adjacency matrix (R_structure)
+# Assuming 'g' is your inla.graph object or adjacency matrix
+R_structure <- inla.graph2matrix(g) 
+
+# 2. Scale the model using the built-in function 
+# (This runs the code you pasted above)
+# We add a sum-to-zero constraint (constr) which is standard for BYM scaling
+scaled_result <- inla.scale.model(R_structure, 
+                                  constr = list(A = matrix(1, 1, nrow(R_structure)), e = 0))
+
+# 3. Extract the scaled matrix
+R_scaled <- scaled_result$Q
+
+```
+
+
+
+# ==============================================================================
+# 5. DEFINE CUSTOM BYM-T MODEL
+# ==============================================================================
+
+```{r}
+# Define the custom BYM-T model
+inla.rgeneric.bym_topological <- function(cmd = c("graph", "Q", "mu", "initial", "log.norm.const", "log.prior", "quit"), theta = NULL, args = NULL) {
+  
+  # Access environment for variables passed in 'define' (like the Graph 'R')
+  envir = parent.env(environment())
+  
+  
+  # Helper function to interpret theta parameters
+  interpret.theta <- function() {
+    # tau_b: precision parameter
+    tau_b <- exp(theta[1L])
+    
+    # Use softmax-like parameterization for alpha1, alpha2, alpha3
+    # to ensure they sum to 1 and are all positive
+    eta1 <- exp(theta[2L])
+    eta2 <- exp(theta[3L])
+    eta_sum <- 1 + eta1 + eta2
+    
+    alpha1 <- eta1 / eta_sum  # unstructured
+    alpha2 <- eta2 / eta_sum  # structured
+    alpha3 <- 1 / eta_sum      # topological
+    
+    return(list(
+      tau_b = tau_b,
+      alpha1 = alpha1,
+      alpha2 = alpha2,
+      alpha3 = alpha3
+    ))
+  }
+  
+  # R is now the PRE-SCALED matrix passed from args
+  R <- args$R 
+  n <- nrow(R)
+  
+  graph <- function() {
+    # The graph is based on the adjacency structure plus diagonal
+    # Return sparse matrix (upper triangular)
+    return(Q())
+  }
+  
+  # Precision matrix Q(theta)
+  Q <- function() {
+    p <- interpret.theta()
+    
+    # Retrieve pre-calculated matrices from environment
+    # Q_struct is the scaled ICAR matrix: scaling_factor * (Diagonal(rowSums(W)) - W)
+    
+    # 1. Unstructured Part (alpha1) + Topological Part (alpha3)
+    # Note: Both are diagonal, so we sum their weights for efficiency
+    # Q_iid = tau * (alpha1 + alpha3) * I
+    
+    # 2. Structured Part (alpha2)
+    # Q_besag = tau * alpha2 * Q_struct
+    
+    # Combine:
+    # We use the pre-calculated 'I_n' and 'Q_struct' from environment
+    Q_val <- p$tau_b * ( (p$alpha1 + p$alpha3) * I_n + p$alpha2 * Q_struct )
+    return(inla.as.sparse(Q_val))
+    
+  }
+  
+  
+  # Mean function
+  mu <- function() {
+    p <- interpret.theta()
+    
+    # The topological component s_i enters as a mean shift
+    # mu_i = (1/sqrt(tau_b)) * sqrt(alpha3) * s_i
+    mean_vec <- sqrt(p$alpha3 / p$tau_b) * s_topo
+    
+    return(mean_vec)
+  }
+  
+  # Log normalizing constant
+  log.norm.const <- function() {
+    # Let INLA compute it from the Cholesky factorization
+    return(numeric(0))
+  }
+  
+  # Log prior
+  log.prior <- function() {
+    p <- interpret.theta()
+    
+    # Prior for tau_b: Gamma(a_tau, b_tau) with Jacobian
+    # Default: Gamma(1, 0.01) - weakly informative
+    log_prior_tau <- dgamma(p$tau_b, shape = prior_tau_a, rate = prior_tau_b, 
+                            log = TRUE) + theta[1L]
+    
+    # Priors for alpha parameters through eta parameterization
+    # Use normal priors on theta[2] and theta[3]
+    log_prior_alpha1 <- dnorm(theta[2L], mean = 0, sd = prior_alpha_sd, log = TRUE)
+    log_prior_alpha2 <- dnorm(theta[3L], mean = 0, sd = prior_alpha_sd, log = TRUE)
+    
+    val <- log_prior_tau + log_prior_alpha1 + log_prior_alpha2
+    
+    return(val)
+  }
+  
+  # Initial values
+  initial <- function() {
+    # tau_b: start with log(precision) = 4 (high precision)
+    # alphas: start with equal weights (theta[2]=theta[3]=0 gives approx equal split)
+    return(c(4, 0, 0))
+  }
+  
+  # Quit function
+  quit <- function() {
+    return(invisible())
+  }
+  
+  # Ensure theta is always defined
+  if (!length(theta)) theta <- initial()
+  
+  # Execute the requested command
+  val <- do.call(match.arg(cmd), args = list())
+  return(val)
+  
+  # sometimes this is useful, as argument 'graph' and 'quit' 
+  # will pass theta=numeric(0) (or NULL in R-3.6...) as 
+  # the values of theta are NOT 
+  # required for defining the graph. however, this statement 
+  # will ensure that theta is always defined. 
+  
+
+}
+
+
+```
+
+
+```{r}
+# --- 2. The Wrapper Function (CRITICAL MISSING PIECE) ---
+
+define.bymt.model <- function(W, s_topo, prior_tau = c(1, 0.01), prior_alpha_sd = 10) {
+  
+  # A. Pre-calculate dimensions and Identity matrix
+  n <- nrow(W)
+  I_n <- Matrix::Diagonal(n)
+  
+  # B. Pre-calculate Scaled ICAR Matrix
+  Q_struct =inla.scale.model(W, constr = list(A = matrix(1,1,n), e = 0))
+  
+  
+  # C. Define the rgeneric model
+  # We pass all necessary variables into the environment
+  model <- inla.rgeneric.define(inla.rgeneric.bym_topological,
+                                W = W,
+                                s_topo = s_topo,
+                                n = n,
+                                I_n = I_n,
+                                Q_struct = Q_struct,
+                                prior_tau_a = prior_tau[1],
+                                prior_tau_b = prior_tau[2],
+                                prior_alpha_sd = prior_alpha_sd)
+  
+  return(model)
+}
+
+```
+
+
+```{r}
+# 1. Define the model object
+bymt_model <- define.bymt.model(W, s_topo)
+
+# 2. Run INLA
+# Note: Since this is a latent field model, we use f(..., model=bymt_model)
+formula <- Y ~ 1 + f(idx, model = bymt_model)
+
+# Create an index for the random effect
+data_df <- data.frame(Y = scotland$data$cases, # or whichever outcome
+                      idx = 1:nrow(W))
+
+result <- inla(formula, 
+               data = data_df, 
+               family = "poisson", # Assuming counts
+               E = scotland$data$expected, # Expected counts/offset
+               control.predictor = list(compute = TRUE))
+
+summary(result)
+
+```
+
+
+
+
+```{r}
+
+library(spdep)
+library(Matrix)
+library(SpatialEpi)
+
+# 1. Load Data
+data(scotland) # This creates a list named 'scotland'
+
+# 1. Get coordinates of the regions (centroids)
+coords <- coordinates(scotland$spatial.polygon)
+
+# 2. Create neighbors based on the 1 nearest neighbor (to ensure no islands)
+# Then add more links to make it robust, or just combine approaches.
+# A common robust method is 4 nearest neighbors:
+k_nb <- knn2nb(knearneigh(coords, k = 4))
+
+# 3. Convert to matrix (Standardized)
+W <- nb2mat(k_nb, style = "B")
+W <- as(W, "sparseMatrix")
+
+# 3. Prepare covariates
+# FIX: Access the data slot inside the list using $data
+X <- matrix(scotland$data$AFF, ncol = 1)
+
+# 4. Create topological data (simulation example)
+# Simulating a random effect with variance 1
+n <- length(scotland$data$AFF)
+s_topo <- rnorm(n, mean = 0, sd = 1)
+
+```
+
+
+
+
+```{r}
+#5. Define BYM-T model
+
+bymt_model <- define.bymt.model(W, s_topo)
+ 
+# 6. Fit the model
+n <- nrow(scotland)
+
+formula <- observed ~ 1 + AFF + f(idx, model = bymt_model)
+result <- inla(formula, 
+                family = "poisson",
+                data = data.frame(
+                  observed = scotland$observed,
+                  expected = scotland$expected,
+                  AFF = scotland$AFF,
+                  idx = 1:n
+                ),
+                E = scotland$expected,
+                control.predictor = list(compute = TRUE))
+ 
+# 7. Extract results
+summary(result)
+```
+
+
+

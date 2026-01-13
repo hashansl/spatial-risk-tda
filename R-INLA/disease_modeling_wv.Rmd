@@ -23,8 +23,6 @@ library(ggplot2)
 # ==============================================================================
 
 ```{r}
-current_path <- getwd()
-
 # Set the base path to one leve up from the current path
 current_path <- dirname(getwd())
 
@@ -39,8 +37,6 @@ print(paste("Current Path:", current_path))
 # ==============================================================================
 
 ```{r}
-message("Loading data...")
-
 # Load SVI TDA Data
 tda_path <- file.path(current_path, "data", "processed_data", paste0("tda_summaries_2018_", state_abb, "_down.csv"))
 svi_tda_data <- read_csv(tda_path, col_types = cols(STCNTY = col_character()))
@@ -50,7 +46,6 @@ smr_path <- file.path(current_path, "data", "processed_data", paste0("smr_data_2
 smr_data <- read_csv(smr_path, col_types = cols(FIPS = col_character()))
 
 # Load Geometry Data (GDB)
-# Python: gpd.read_file(...)
 geo_path <- file.path(current_path, "data", "raw_data", "SVI2018_US_county.gdb")
 # Note: "layers" in GDB might vary, usually it's the main layer name. 
 # You can check layers with: st_layers(geo_path)
@@ -61,9 +56,6 @@ geo_data <- st_read(geo_path, quiet = TRUE) %>%
 # 3. DATA MERGING AND PROCESSING
 # ==============================================================================
 ```{r}
-
-message("Processing data...")
-
 # Merge SMR and TDA data (Left join on FIPS = STCNTY)
 combined_data <- smr_data %>%
   left_join(svi_tda_data, by = c("FIPS" = "STCNTY"))
@@ -74,18 +66,17 @@ combined_data <- geo_data %>%
   right_join(combined_data, by = "FIPS") %>%
   filter(ST_ABBR == state_abb)
 
-# Check shape (matches your (55, 89) approximately)
-print(paste("Shape of data:", nrow(combined_data)))
+# Check shape
+print(paste("Shape after adding AL column:", nrow(combined_data), ncol(combined_data)))
 
 ```
-# =============================================================================
-
 ```{r}
 # Cleaning the processed data
 
-# remove rows with zero observed deaths
+# remove rows with zero observed deaths (removing missing data)
 combined_data <- combined_data %>%
   filter(observed_deaths > 0)
+
 
 # identify islands (no neighbors) and remove them
 nb <- poly2nb(combined_data, row.names = combined_data$FIPS)
@@ -102,8 +93,12 @@ combined_data <- combined_data %>%
 print(paste("Shape after cleaning:", nrow(combined_data)))
 
 ```
+# ==============================================================================
+# 3.5 PROCESSING DATA FOR THE BYM-T MODEL
+# ==============================================================================
+
 ```{r}
-# aggregate row wise data in the columns that ends with '_AL' and store in a column nsamed 'AL'
+# aggregate row wise data in the columns that ends with '_AL' and store in a column named 'AL'
 combined_data <- combined_data %>%
   rowwise() %>%
   mutate(AL = sum(c_across(ends_with("_AL")), na.rm = TRUE)) %>%
@@ -112,12 +107,133 @@ combined_data <- combined_data %>%
 # print the shape after adding AL column
 print(paste("Shape after adding AL column:", nrow(combined_data), ncol(combined_data)))
 
+# mean standerdize the AL column
+combined_data <- combined_data %>%
+  mutate(AL = scale(AL))
+
+```
+# ==============================================================================
+# 4. SPATIAL ADJACENCY MATRIX (GRAPH)
+# ==============================================================================
+```{r}
+# INLA requires a graph object or file to define neighbors.
+# This replaces libpysal.weights.Queen
+
+# Create neighbor list (Queen contiguity)
+nb <- poly2nb(combined_data, queen = TRUE)
+
+# Convert to INLA graph file
+nb2INLA("wv.graph", nb)
+g <- inla.read.graph("wv.graph")
+
+# Create a unique ID for the spatial random effect (INLA requires integer indices)
+combined_data$ID_spatial <- 1:nrow(combined_data)
+```
+
+# ==============================================================================
+# 5. DEFINE AND RUN INLA MODEL (BYM)
+# ==============================================================================
+# We use the "bym2" model which is the modern, scaled version of BYM.
+
+# Formula:
+# Observed ~ Intercept + Covariates + f(spatial_field) + offset(log(Expected))
+
+```{r}
+# C. MATCHING REGRESSION COEFFICIENTS (The "Tight" Priors)
+# Python: pm.Normal(0, 1) -> Precision = 1 / 1^2 = 1
+# We must tell INLA to use Precision = 1 for Intercept and all Betas
+control_fixed_priors <- list(
+  mean.intercept = 0, 
+  prec.intercept = 1,  # Matches Python intercept sigma=1
+  mean = 0, 
+  prec = 1             # Matches Python beta_* sigma=1
+)
+
+```
+
+```{r}
+# Define the new "Uniform/Traditional" priors
+#hyper.uniform <- list(
+#  prec = list(prior = "loggamma", param = c(1, 0.0005)),  # Gamma prior for precision
+#  phi = list(prior = "logitbeta", param = c(1, 1))        # Uniform prior for phi
+#)
+
+# Run the INLA model with these new priors
+#model.uniform <- inla(formula, 
+#                      family = "poisson", 
+#                      data = data, 
+#                      control.predictor = list(compute = TRUE),
+#                      control.family = list(hyper = hyper.uniform)) # Apply here
 ```
 
 
 
 
+```{r}
+formula <- observed_deaths ~ 1 + EP_POV_AV_ORI + EP_UNEMP_AV_ORI + EP_PCI_AV_ORI + EP_NOHSDP_AV_ORI + EP_AGE65_AV_ORI + EP_AGE17_AV_ORI + EP_DISABL_AV_ORI + EP_SNGPNT_AV_ORI + EP_MINRTY_AV_ORI + EP_LIMENG_AV_ORI + EP_MUNIT_AV_ORI + EP_MOBILE_AV_ORI + EP_CROWD_AV_ORI + EP_NOVEH_AV_ORI + EP_GROUPQ_AV_ORI +
+  f(ID_spatial, 
+    model = "bym2", 
+    graph = g, 
+    scale.model = TRUE, 
+    constr = TRUE,
+    hyper = list(
+      phi = list(prior = "logitbeta", param = c(1, 1)),
+      prec = list(prior = "pc.prec", param = c(1, 0.01))
+    ))
 
+message("Running INLA BYM model...")
 
+# Run the model
+# E = expected_deaths is used as the offset (log scale implicitly handled by E argument in family="poisson" 
+# or explicitly as offset(log(expected_deaths))). INLA allows `E` argument for Poisson.
 
+model_inla <- inla(formula,
+                   family = "poisson",
+                   data = combined_data,
+                   E = combined_data$expected_deaths, # Assumes column is named 'expected_deaths'
+                   control.fixed = control_fixed_priors,
+                   control.predictor = list(compute = TRUE),
+                   control.compute = list(dic = TRUE, waic = TRUE, config = TRUE))
+```
 
+# ==============================================================================
+# 6. MODEL OUTPUT AND DIAGNOSTICS
+# ==============================================================================
+
+```{r}
+
+# Print Summary (Fixed effects and Hyperparameters)
+summary(model_inla)
+
+# Extract Fixed Effects (Coefficients for Intercept, tda_0, tda_1)
+print(model_inla$summary.fixed)
+
+# Extract Hyperparameters (Phi and Precision/Sigma)
+print(model_inla$summary.hyperpar)
+
+# Plotting the Spatial Random Field (Structured Component)
+# The BYM2 random effect result contains summary.random$ID_spatial
+# calculating the mean spatial effect:
+combined_data$spatial_mean <- model_inla$summary.random$ID_spatial$mean[1:nrow(combined_data)]
+
+# Simple plot
+plot(combined_data["spatial_mean"], main = "Posterior Mean Spatial Random Effect (WV)")
+
+print(scaling_factor)
+
+```
+```{r}
+# Before running INLA, calculate it yourself
+n <- nrow(combined_data)
+Q_matrix <- inla.graph2matrix(g)
+
+# Apply the same scaling INLA would use
+QQ_scaled <- inla.scale.model(, 
+                               constr = list(A = matrix(1, 1, n), e = 0))
+
+# Extract the scaling factor
+scaling_factor <- QQ_scaled[1,1] / Q_matrix[1,1]
+print(paste("Scaling factor:", scaling_factor))
+
+# Then run your model as usual with scale.model = TRUE
+```
