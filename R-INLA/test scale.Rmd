@@ -9,15 +9,71 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-#
+```{r}
+library(INLA)
+library(sf)
+library(spdep)
+library(dplyr)
+library(readr)
+
+library(Matrix)
+library(MASS)   # For ginv()
+
+```
+```{r}
+# Or see the full code
+getAnywhere(inla.scale.model.internal)
+```
+
 
 ```{r}
 # matrix_path: ~/CODE/Archive/git/spatial-risk-tda/R-INLA/matrix_mittelfranken.txt
 
-# Load the matrix
-matrix_data <- read.table("~/CODE/Archive/git/spatial-risk-tda/R-INLA/matrix_mittelfranken.txt")
+# Read as CSV (comma-delimited)
+matrix_mittelfranken <- as.matrix(read.csv("~/CODE/Archive/git/spatial-risk-tda/R-INLA/matrix_mittelfranken.txt", 
+                                            header = FALSE))
 
-# If it's a proper matrix (numeric data), convert to matrix format
-matrix_mittelfranken <- as.matrix(matrix_data)
+# Ensure it's numeric
+matrix_mittelfranken <- matrix(as.numeric(matrix_mittelfranken), 
+                               nrow = nrow(matrix_mittelfranken))
 
 ```
+
+```{r}
+# Check the class and type
+class(matrix_mittelfranken)
+typeof(matrix_mittelfranken)
+
+# Look at the first few entries
+head(matrix_mittelfranken)
+
+# Check if it's character data
+is.character(matrix_mittelfranken)
+
+n <- nrow(matrix_mittelfranken)
+
+#print(paste("Number of areas (n):", n))
+
+QQ =inla.scale.model(matrix_mittelfranken, constr = list(A = matrix(1,1,n), e = 0))
+
+#print(QQ)
+
+# get the sum of the diagnol
+
+diag_sum <- sum(diag(QQ))
+print(paste("Sum of diagonal elements of QQ:", diag_sum))
+
+attributes(QQ)
+
+```
+
+```{r}
+scaling_factor <- exp(mean(log(diag(QQ))))
+
+print(paste("Scaling factor", scaling_factor))
+```
+
+
+
+
+
