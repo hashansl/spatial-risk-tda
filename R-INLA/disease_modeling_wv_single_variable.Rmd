@@ -98,12 +98,9 @@ print(paste("Shape after cleaning:", nrow(combined_data)))
 # ==============================================================================
 
 ```{r}
-
 # mean standerdize the AL column
 combined_data <- combined_data %>%
   mutate(AL = scale(EP_POV_AL))
-
-
 ```
 # ==============================================================================
 # 4. SPATIAL ADJACENCY MATRIX (GRAPH)
@@ -163,7 +160,7 @@ control_fixed_priors <- list(
 
 
 ```{r}
-formula <- observed_deaths ~ 1 + EP_POV_AV_ORI + EP_UNEMP_AV_ORI + EP_PCI_AV_ORI + EP_NOHSDP_AV_ORI + EP_AGE65_AV_ORI + EP_AGE17_AV_ORI + EP_DISABL_AV_ORI + EP_SNGPNT_AV_ORI + EP_MINRTY_AV_ORI + EP_LIMENG_AV_ORI + EP_MUNIT_AV_ORI + EP_MOBILE_AV_ORI + EP_CROWD_AV_ORI + EP_NOVEH_AV_ORI + EP_GROUPQ_AV_ORI +
+formula <- observed_deaths ~ 1 + EP_POV_AV_ORI +
   f(ID_spatial, 
     model = "bym2", 
     graph = g, 
@@ -211,8 +208,33 @@ combined_data$spatial_mean <- model_inla$summary.random$ID_spatial$mean[1:nrow(c
 
 # Simple plot
 plot(combined_data["spatial_mean"], main = "Posterior Mean Spatial Random Effect (WV)")
+```
+
+```{r}
+# Extract Phi Mean
+phi_mean <- model_inla$summary.hyperpar["Phi for ID_spatial", "mean"]
+print(paste("Mean Phi:", phi_mean))
+
+# Extract Precision Mean
+prec_mean <- model_inla$summary.hyperpar["Precision for ID_spatial", "mean"]
+print(paste("Mean Precision:", prec_mean))
 
 ```
+```{r}
+# 1. Get the marginal posterior for precision
+marg_prec <- model_inla$marginals.hyperpar[["Precision for ID_spatial"]]
+
+# 2. Transform it to Sigma (Standard Deviation = 1/sqrt(Precision))
+marg_sigma <- inla.tmarginal(function(x) 1/sqrt(x), marg_prec)
+
+# 3. Calculate summary statistics for Sigma
+sigma_summary <- inla.zmarginal(marg_sigma, silent = TRUE)
+
+print(paste("Mean Sigma (Spatial SD):", sigma_summary$mean))
+
+```
+
+
 
 
 

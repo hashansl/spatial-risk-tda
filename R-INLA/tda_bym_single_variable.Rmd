@@ -106,18 +106,10 @@ print(paste("Shape after cleaning:", nrow(combined_data)))
 # ==============================================================================
 
 ```{r}
-# aggregate row wise data in the columns that ends with '_AL' and store in a column named 'AL'
-#combined_data <- combined_data %>%
-#  rowwise() %>%
-#  mutate(AL = sum(c_across(ends_with("_AL")), na.rm = TRUE)) %>%
-#  ungroup()
-
-# print the shape after adding AL column
-#print(paste("Shape after adding AL column:", nrow(combined_data), ncol(combined_data)))
-
 # mean standerdize the AL column
 combined_data <- combined_data %>%
   mutate(AL = scale(EP_POV_AL))
+
 
 ```
 
@@ -247,13 +239,14 @@ inla.rgeneric.bym_topological <- function(cmd = c("graph", "Q", "mu", "initial",
   
   # Mean function
   mu <- function() {
-    p <- interpret.theta()
+    #p <- interpret.theta()
     
     # The topological component s_i enters as a mean shift
     # mu_i = (1/sqrt(tau_b)) * sqrt(alpha3) * s_i
-    mean_vec <- sqrt(p$alpha3 / p$tau_b) * s_topo
+    #mean_vec <- sqrt(p$alpha3 / p$tau_b) * s_topo
     
-    return(mean_vec)
+    #return(mean_vec)
+    return(numeric(0))
   }
   
   # Log normalizing constant
@@ -315,7 +308,7 @@ inla.rgeneric.bym_topological <- function(cmd = c("graph", "Q", "mu", "initial",
 ```{r}
 # The Wrapper Function (CRITICAL) ---
 
-define.bymt.model <- function(W, s_topo_vector, prior_tau = c(1, 0.01), prior_alpha_sd = 1) {
+define.bymt.model <- function(W, s_topo_vector, prior_tau = c(1, 0.01), prior_alpha_sd = 10) {
   
   # A. Pre-calculate dimensions and Identity matrix
   n <- nrow(W)
@@ -426,3 +419,60 @@ print(param_summary)
 
 
 ```
+
+
+```{r}
+# 1. Generate samples from the posterior distribution
+# n = 1000 is usually sufficient for summary statistics
+samples <- inla.posterior.sample(n = 1000, result)
+
+# 2. Define a transformation function (Matches your interpret.theta logic)
+get_params <- function(s) {
+  # Extract the latent hyperparameters
+  # Note: The names typically look like "Theta1 for idx", "Theta2 for idx"
+  # We find them by partial matching to be safe
+  theta_names <- names(s$hyperpar)
+  
+  t1 <- s$hyperpar[grep("Theta1", theta_names)] # log(tau)
+  t2 <- s$hyperpar[grep("Theta2", theta_names)] # log(eta1)
+  t3 <- s$hyperpar[grep("Theta3", theta_names)] # log(eta2)
+  
+  # Apply the Inverse Transformations
+  tau_b <- exp(t1)
+  
+  eta1 <- exp(t2)
+  eta2 <- exp(t3)
+  eta_sum <- 1 + eta1 + eta2
+  
+  alpha_unstruct <- eta1 / eta_sum # alpha1
+  alpha_struct   <- eta2 / eta_sum # alpha2
+  alpha_topo     <- 1 / eta_sum    # alpha3 (Topological)
+  
+  return(c(tau = tau_b, 
+           alpha_unstruct = alpha_unstruct, 
+           alpha_struct = alpha_struct, 
+           alpha_topo = alpha_topo))
+}
+
+# 3. Apply transformation to all samples
+transformed_samples <- t(sapply(samples, get_params))
+transformed_df <- as.data.frame(transformed_samples)
+
+# 4. Calculate Summary Statistics
+param_summary <- data.frame(
+  Parameter = colnames(transformed_df),
+  Mean = colMeans(transformed_df),
+  Median = apply(transformed_df, 2, median),
+  SD = apply(transformed_df, 2, sd),
+  Q0.025 = apply(transformed_df, 2, quantile, probs = 0.025),
+  Q0.975 = apply(transformed_df, 2, quantile, probs = 0.975)
+)
+
+# Print the readable summary
+print(param_summary)
+
+
+```
+
+
+
