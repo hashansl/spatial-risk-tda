@@ -1,5 +1,7 @@
 /data/processed_data
 /data/raw_data
+
+plots/
 *.DS_Store
 *.pyc
 __pycache__/
